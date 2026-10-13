@@ -1,11 +1,20 @@
 import { useEffect } from 'react';
 import { useRecoilState } from 'recoil';
 import TagManager from 'react-gtm-module';
-import { LocalStorageKeys } from 'librechat-data-provider';
+import { installCloudFrontImageRetry } from '@librechat/client';
+import {
+  getTokenHeader,
+  LocalStorageKeys,
+  PermissionTypes,
+  Permissions,
+  resolveModelSpecEndpoint,
+} from 'librechat-data-provider';
 import type { TStartupConfig, TUser } from 'librechat-data-provider';
 import { cleanupTimestampedStorage } from '~/utils/timestamps';
 import useSpeechSettingsInit from './useSpeechSettingsInit';
-import { useMCPToolsQuery, useMCPServersQuery } from '~/data-provider';
+import { useHasAccess, useCatalogReady } from '~/hooks';
+import { useMCPServersQuery } from '~/data-provider';
+import { setDocumentTitle } from '~/utils';
 import store from '~/store';
 
 export default function useAppStartup({
@@ -16,13 +25,16 @@ export default function useAppStartup({
   user?: TUser;
 }) {
   const [defaultPreset, setDefaultPreset] = useRecoilState(store.defaultPreset);
+  const canUseMcp = useHasAccess({
+    permissionType: PermissionTypes.MCP_SERVERS,
+    permission: Permissions.USE,
+  });
 
   useSpeechSettingsInit(!!user);
-  const { data: loadedServers, isLoading: serversLoading } = useMCPServersQuery();
-
-  useMCPToolsQuery({
-    enabled: !serversLoading && !!loadedServers && Object.keys(loadedServers).length > 0 && !!user,
-  });
+  /** Server metadata may warm after first paint because it powers lightweight
+   * navigation affordances. Tool discovery stays owned by visible MCP consumers. */
+  const mcpServersReady = useCatalogReady('mcpServers');
+  useMCPServersQuery({ enabled: canUseMcp && mcpServersReady });
 
   /** Clean up old localStorage entries on startup */
   useEffect(() => {
@@ -35,7 +47,7 @@ export default function useAppStartup({
     if (!appTitle) {
       return;
     }
-    document.title = appTitle;
+    setDocumentTitle(appTitle, true);
     localStorage.setItem(LocalStorageKeys.APP_TITLE, appTitle);
   }, [startupConfig]);
 
@@ -59,10 +71,15 @@ export default function useAppStartup({
 
     setDefaultPreset({
       ...defaultSpec.preset,
+      endpoint: resolveModelSpecEndpoint(defaultSpec) ?? null,
       iconURL: defaultSpec.iconURL,
       spec: defaultSpec.name,
     });
   }, [defaultPreset, setDefaultPreset, startupConfig?.modelSpecs?.list]);
+
+  useEffect(() => {
+    return installCloudFrontImageRetry(startupConfig, { getAuthorizationHeader: getTokenHeader });
+  }, [startupConfig]);
 
   useEffect(() => {
     if (startupConfig?.analyticsGtmId != null && typeof window.google_tag_manager === 'undefined') {

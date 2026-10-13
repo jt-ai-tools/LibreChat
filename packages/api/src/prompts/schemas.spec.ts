@@ -1,8 +1,36 @@
 import {
   updatePromptGroupSchema,
   validatePromptGroupUpdate,
+  safeValidatePromptPayload,
   safeValidatePromptGroupUpdate,
 } from './schemas';
+
+describe('safeValidatePromptPayload', () => {
+  it('keeps the prompt fields and removes other fields', () => {
+    const result = safeValidatePromptPayload({
+      prompt: 'Text',
+      type: 'chat',
+      groupId: 'group-1',
+      author: 'user-1',
+    });
+
+    expect(result.success && result.data).toEqual({ prompt: 'Text', type: 'chat' });
+  });
+
+  it.each([
+    [null, 'Prompt text is required and must be a non-empty string'],
+    [{ type: 'text' }, 'Prompt text is required and must be a non-empty string'],
+    [{ prompt: 42, type: 'text' }, 'Prompt text is required and must be a non-empty string'],
+    [{ prompt: '   ', type: 'text' }, 'Prompt text is required and must be a non-empty string'],
+    [{ prompt: 'Text' }, 'Prompt type must be "text" or "chat"'],
+    [{ prompt: 'Text', type: 'image' }, 'Prompt type must be "text" or "chat"'],
+  ])('rejects %j with the route message', (payload, message) => {
+    const result = safeValidatePromptPayload(payload);
+
+    expect(result.success).toBe(false);
+    expect(result.success ? undefined : result.error.issues[0]?.message).toBe(message);
+  });
+});
 
 describe('updatePromptGroupSchema', () => {
   describe('allowed fields', () => {
@@ -27,26 +55,6 @@ describe('updatePromptGroupSchema', () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.category).toBe('testing');
-      }
-    });
-
-    it('should accept valid projectIds array', () => {
-      const result = updatePromptGroupSchema.safeParse({
-        projectIds: ['proj1', 'proj2'],
-      });
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.projectIds).toEqual(['proj1', 'proj2']);
-      }
-    });
-
-    it('should accept valid removeProjectIds array', () => {
-      const result = updatePromptGroupSchema.safeParse({
-        removeProjectIds: ['proj1'],
-      });
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.removeProjectIds).toEqual(['proj1']);
       }
     });
 

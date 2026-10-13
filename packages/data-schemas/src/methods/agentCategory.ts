@@ -1,14 +1,40 @@
 import type { Model, Types } from 'mongoose';
 import type { IAgentCategory } from '~/types';
+import { tenantSafeBulkWrite } from '~/utils/tenantBulkWrite';
 
-export function createAgentCategoryMethods(mongoose: typeof import('mongoose')) {
+export function createAgentCategoryMethods(mongoose: typeof import('mongoose')): {
+  getActiveCategories: () => Promise<IAgentCategory[]>;
+  getCategoriesWithCounts: () => Promise<(IAgentCategory & { agentCount: number })[]>;
+  getValidCategoryValues: () => Promise<string[]>;
+  seedCategories: (
+    categories: Array<{
+      value: string;
+      label?: string;
+      description?: string;
+      order?: number;
+      custom?: boolean;
+    }>,
+  ) => Promise<import('mongoose').mongo.BulkWriteResult>;
+  findCategoryByValue: (value: string) => Promise<IAgentCategory | null>;
+  createCategory: (categoryData: Partial<IAgentCategory>) => Promise<IAgentCategory>;
+  updateCategory: (
+    value: string,
+    updateData: Partial<IAgentCategory>,
+  ) => Promise<IAgentCategory | null>;
+  deleteCategory: (value: string) => Promise<boolean>;
+  findCategoryById: (id: string | Types.ObjectId) => Promise<IAgentCategory | null>;
+  getAllCategories: () => Promise<IAgentCategory[]>;
+  ensureDefaultCategories: () => Promise<boolean>;
+} {
   /**
    * Get all active categories sorted by order
    * @returns Array of active categories
    */
   async function getActiveCategories(): Promise<IAgentCategory[]> {
     const AgentCategory = mongoose.models.AgentCategory as Model<IAgentCategory>;
-    return await AgentCategory.find({ isActive: true }).sort({ order: 1, label: 1 }).lean();
+    return await AgentCategory.find({ isActive: true })
+      .sort({ order: 1, label: 1 })
+      .lean<IAgentCategory[]>();
   }
 
   /**
@@ -18,13 +44,15 @@ export function createAgentCategoryMethods(mongoose: typeof import('mongoose')) 
   async function getCategoriesWithCounts(): Promise<(IAgentCategory & { agentCount: number })[]> {
     const Agent = mongoose.models.Agent;
 
-    const categoryCounts = await Agent.aggregate([
-      { $match: { category: { $exists: true, $ne: null } } },
-      { $group: { _id: '$category', count: { $sum: 1 } } },
+    const [categoryCounts, categories] = await Promise.all([
+      Agent.aggregate([
+        { $match: { category: { $exists: true, $ne: null } } },
+        { $group: { _id: '$category', count: { $sum: 1 } } },
+      ]),
+      getActiveCategories(),
     ]);
 
     const countMap = new Map(categoryCounts.map((c) => [c._id, c.count]));
-    const categories = await getActiveCategories();
 
     return categories.map((category) => ({
       ...category,
@@ -74,7 +102,7 @@ export function createAgentCategoryMethods(mongoose: typeof import('mongoose')) 
       },
     }));
 
-    return await AgentCategory.bulkWrite(operations);
+    return await tenantSafeBulkWrite(AgentCategory, operations);
   }
 
   /**
@@ -84,7 +112,7 @@ export function createAgentCategoryMethods(mongoose: typeof import('mongoose')) 
    */
   async function findCategoryByValue(value: string): Promise<IAgentCategory | null> {
     const AgentCategory = mongoose.models.AgentCategory as Model<IAgentCategory>;
-    return await AgentCategory.findOne({ value }).lean();
+    return await AgentCategory.findOne({ value }).lean<IAgentCategory>();
   }
 
   /**
@@ -113,7 +141,7 @@ export function createAgentCategoryMethods(mongoose: typeof import('mongoose')) 
       { value },
       { $set: updateData },
       { new: true, runValidators: true },
-    ).lean();
+    ).lean<IAgentCategory>();
   }
 
   /**
@@ -134,7 +162,7 @@ export function createAgentCategoryMethods(mongoose: typeof import('mongoose')) 
    */
   async function findCategoryById(id: string | Types.ObjectId): Promise<IAgentCategory | null> {
     const AgentCategory = mongoose.models.AgentCategory as Model<IAgentCategory>;
-    return await AgentCategory.findById(id).lean();
+    return await AgentCategory.findById(id).lean<IAgentCategory>();
   }
 
   /**
@@ -143,7 +171,7 @@ export function createAgentCategoryMethods(mongoose: typeof import('mongoose')) 
    */
   async function getAllCategories(): Promise<IAgentCategory[]> {
     const AgentCategory = mongoose.models.AgentCategory as Model<IAgentCategory>;
-    return await AgentCategory.find({}).sort({ order: 1, label: 1 }).lean();
+    return await AgentCategory.find({}).sort({ order: 1, label: 1 }).lean<IAgentCategory[]>();
   }
 
   /**
@@ -241,7 +269,7 @@ export function createAgentCategoryMethods(mongoose: typeof import('mongoose')) 
         },
       }));
 
-      await AgentCategory.bulkWrite(bulkOps, { ordered: false });
+      await tenantSafeBulkWrite(AgentCategory, bulkOps, { ordered: false });
     }
 
     return updates.length > 0 || created > 0;
